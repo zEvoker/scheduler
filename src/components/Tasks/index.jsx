@@ -1,27 +1,105 @@
-import { faCircleDot, faCheck, faXmark, faPlus } from "@fortawesome/free-solid-svg-icons";
+import { faCheck, faXmark, faPlus, faTrashAlt, faSquare, faClock, faBullseye } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { format } from "date-fns";
-import { useState } from "react";
+import { format, isToday, startOfToday } from "date-fns";
+import { arrayRemove, arrayUnion, doc, updateDoc } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import { db } from "../../firebase";
+import cloc from '../../assets/clock.png'
 
-const Tasks = ({ selectedDay }) => {
+const Tasks = ({ selectedDay,user,allTasks }) => {
     const [events, setevents] = useState([])
-    const [newevent, setnewevent] = useState({name:"",type:"",time:"",desc:"",status:false})
+    const [newevent, setnewevent] = useState({name:"",type:"task",time:"",desc:"",status:false})
     const [activ, setactiv] = useState(false)
-    const options = ["Task","Deadline","Occasion","Reminder","Other",];
+    const options = ["task","deadline","occasion","reminder","other",];
 
-    const handleAddEvent = () => {
-        if(newevent.name=="") return;
-        const id = events.length + 1;
-        const newEvents = [...events, { id, ...newevent }];
-        newEvents.sort((a, b) => {
-            const timeA = new Date(`1970-01-01T${a.time}`);
-            const timeB = new Date(`1970-01-01T${b.time}`);
-            return timeA - timeB;
+    useEffect(() => {
+        setevents(allTasks.filter(event => {
+            const eventDate = event.date.toDate();
+            return format(selectedDay, 'yyyy-MM-dd') === format(eventDate, 'yyyy-MM-dd');
+        }));
+    }, [selectedDay,allTasks]);
+
+    useEffect(() => {
+        requestNotificationPermission();
+        allTasks.forEach(event => {
+            if(isToday(event.date.toDate())) scheduleNotification(event);
         });
-        setevents(newEvents);
-        setnewevent({name:"",type:"",time:"",desc:"",status:false});
-        setactiv(false)
+    }, []);
+
+    const requestNotificationPermission = async () => {
+        try {
+            const permission = await Notification.requestPermission();
+            if (permission !== "granted") {
+                throw new Error("Permission not granted for Notification");
+            }
+        } catch (error) {
+            console.error("Error requesting notification permission", error);
+        }
     };
+
+    const scheduleNotification = (event) => {
+        if(!event.time) return;
+        const currentTime = new Date();
+        const eventDate = new Date();
+        const [hours, minutes] = event.time.split(':');
+        eventDate.setHours(hours, minutes, 0, 0);
+        const delay = eventDate - currentTime;
+        if (delay > 0) {
+            setTimeout(() => {
+                showNotification(event);
+            }, delay);
+        }
+    };
+    
+    const showNotification = (event) => {
+        const notif = new Notification(`Reminder for ${event.name}`, {
+            body: `${event.desc} at ${event.time}`,
+            icon: cloc, 
+        });
+        notif.onclick = () => {
+            window.focus();
+        }
+        // notif.onclose = () => {
+        //     const updatedEvent = { ...event, status: !event.status };
+        //     setevents(events.map(e => (e.name === event.name ? updatedEvent : e)));
+        // }
+    };
+    
+
+    const handleDel = async (event) => {
+        try {
+            event.status=false;
+            await updateDoc(doc(db, "users", user.uid), {
+                tasks: arrayRemove(event)
+            });
+        } catch (error) {
+            console.error("Error deleting event:", error);
+        }
+    };
+    
+
+    const handleCheck = async (event) => {
+        const updatedEvent = { ...event, status: !event.status };
+        setevents(events.map(e => (e.name === event.name ? updatedEvent : e)));
+    }
+
+    const handleAddEvent = async () => {
+        try {
+            if (newevent.name === "") return; 
+            if (selectedDay < startOfToday()) return;
+            const event = { ...newevent, date: selectedDay }; 
+            if(isToday(event.date)) scheduleNotification(event);
+            await updateDoc(doc(db, "users", user.uid), {
+                tasks: arrayUnion(event) 
+            });
+            setevents([...events, event]); 
+            setnewevent({ name: "", type: "task", time: "", desc: "", status: false });
+            setactiv(false); 
+        } catch (error) {
+            console.error("Error adding event:", error);
+        }
+    };
+    
 
     return (
         <div className="relative w-1/2 py-5 px-5">
@@ -41,8 +119,11 @@ const Tasks = ({ selectedDay }) => {
                 :
                 events.map (event => (
                     <div key={event.id} className="relative w-full min-h-16 grid grid-cols-4 gap-1 py-0 text-white cursor-pointer bg-gradient-to-r from-taskbg even:from-transparent hover:from-violet-300">
-                    <div className="pointer-events-none flex items-center justify-start pl-5">
-                        <FontAwesomeIcon icon={faCircleDot} />
+                    <div className="flex items-center justify-start pl-5">
+                        {event.status?
+                        <FontAwesomeIcon icon={faTrashAlt} className="cursor-pointer hover:text-red-500" onClick={() => handleDel(event)}/>
+                        :
+                        <FontAwesomeIcon icon={event.type==="task"? faBullseye : faClock} />}
                     </div>
                     <div className="pointer-events-none flex items-center">
                         <h3 className="font-normal text-base ml-5">{event.name}</h3>
@@ -51,7 +132,7 @@ const Tasks = ({ selectedDay }) => {
                         <span>{event.time}</span>
                     </div>
                     <div className="flex items-center justify-center">
-                        <FontAwesomeIcon icon={faXmark} className="hover:text-black border border-solid border-white py-1 px-1.5" />
+                        <FontAwesomeIcon icon={event.status ? faCheck : faSquare} onClick={()=> handleCheck(event)} className="hover:text-black border border-solid border-white py-1 px-1.5" />
                     </div>
                 </div>
                 ))}
@@ -82,7 +163,7 @@ const Tasks = ({ selectedDay }) => {
                     </div>
                 </div>
                 <div className="flex items-center justify-center p-5">
-                    <button onClick={()=>{handleAddEvent();}} className="h-10 text-base font-medium outline-none text-white bg-violet-300 rounded-md cursor-pointer py-1 px-2 border border-solid border-violet-300 hover:text-violet-300 hover:bg-transparent">add event</button>
+                    <button onClick={()=>{handleAddEvent();}} className="h-10 text-base font-medium outline-none text-white bg-violet-400 rounded-md cursor-pointer py-1 px-2 border border-solid border-violet-300 hover:text-violet-300 hover:bg-transparent">add event</button>
                 </div>
             </div>}
             <button onClick={() => setactiv(true)} className="absolute bottom-7 right-7 w-10 h-10 rounded-full flex items-center justify-center text-base text-zy border-2 border-solid border-zy opacity-50 bg-transparent cursor-pointer hover:opacity-100"><FontAwesomeIcon icon={faPlus} /></button>

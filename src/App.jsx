@@ -48,7 +48,7 @@ function App() {
       <FontAwesomeIcon className='absolute cursor-pointer top-2 right-2 text-zy' icon={faArrowRightFromBracket} onClick={()=>signOut(auth)}/>
       </>
       :
-      <Login user={user} setUser={setUser}/>
+      <Login setUser={setUser}/>
   )
 }
 
